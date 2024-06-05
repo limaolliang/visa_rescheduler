@@ -1,2 +1,2 @@
-cd C:\Users\maoliangli\OneDrive\Documents\visa_rescheduler-main
+cd C:\Users\maoliangli\OneDrive\Documents\workplace\visa_rescheduler
 python visa.py

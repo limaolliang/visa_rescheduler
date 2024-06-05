@@ -201,16 +201,14 @@ def reschedule(date):
     print("---------")
     print(data)
 
-
-
-    # r = requests.post(APPOINTMENT_URL, headers=headers, data=data)
-    #if(r.text.find('Successfully Scheduled') != -1):
-    #    msg = f"Rescheduled Successfully! {date} {time}"
-    #    send_notification(msg)
-    #    EXIT = True
-    #else:
-    #    msg = f"Reschedule Failed. {date} {time}"
-    #    send_notification(msg)
+    r = requests.post(APPOINTMENT_URL, headers=headers, data=data)
+    if(r.text.find('Successfully Scheduled') != -1):
+        msg = f"Rescheduled Successfully! {date} {time}"
+        send_notification(msg)
+        EXIT = True
+    else:
+        msg = f"Reschedule Failed. {date} {time}"
+        send_notification(msg)
 
 
 def is_logged_in():
