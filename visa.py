@@ -36,14 +36,15 @@ PUSH_USER = config['PUSHOVER']['PUSH_USER']
 LOCAL_USE = config['CHROMEDRIVER'].getboolean('LOCAL_USE')
 HUB_ADDRESS = config['CHROMEDRIVER']['HUB_ADDRESS']
 
-REGEX_CONTINUE = "//a[contains(text(),'Continuar')]"
+REGEX_CONTINUE = "//a[contains(text(),'Continue')]"
+REGEX_SCHEDULE_APPOINTMENT = "//a[contains(text(),'Schedule Appointment')]"
 
 
 # def MY_CONDITION(month, day): return int(month) == 11 and int(day) >= 5
 def MY_CONDITION(month, day): return True # No custom condition wanted for the new scheduled date
 
 STEP_TIME = 0.5  # time between steps (interactions with forms): 0.5 seconds
-RETRY_TIME = 60*10  # wait time between retries/checks for available dates: 10 minutes
+RETRY_TIME = 60*60  # wait time between retries/checks for available dates: 10 minutes
 EXCEPTION_TIME = 60*30  # wait time when an exception occurs: 30 minutes
 COOLDOWN_TIME = 60*60  # wait time when temporary banned (empty list): 60 minutes
 
@@ -53,7 +54,7 @@ APPOINTMENT_URL = f"https://ais.usvisa-info.com/{COUNTRY_CODE}/niv/schedule/{SCH
 EXIT = False
 
 
-def send_notification(msg):
+def send_notification(msg, prior=1):
     print(f"Sending notification: {msg}")
 
     if SENDGRID_API_KEY:
@@ -61,6 +62,7 @@ def send_notification(msg):
             from_email=USERNAME,
             to_emails=USERNAME,
             subject=msg,
+            priority=prior,
             html_content=msg)
         try:
             sg = SendGridAPIClient(SENDGRID_API_KEY)
@@ -138,38 +140,49 @@ def do_login_action():
     Wait(driver, 60).until(
         EC.presence_of_element_located((By.XPATH, REGEX_CONTINUE)))
     print("\tlogin successful!")
+    
+
+def new_get_date():
+    # driver.get(DATE_URL)
+    driver.get(APPOINTMENT_URL)
+    session = driver.get_cookie("_yatri_session")["value"]
+    NEW_GET = driver.execute_script(
+        "var req = new XMLHttpRequest();req.open('GET', '"
+        + str(DATE_URL)
+        + "', false);req.setRequestHeader('Accept', 'application/json, text/javascript, /; q=0.01');req.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); req.setRequestHeader('Cookie', '_yatri_session="
+        + session
+        + "'); req.send(null);return req.responseText;"
+    )
+    dates = json.loads(NEW_GET)
+    print(dates)
+    return dates
 
 
-def get_date():
-    driver.get(DATE_URL)
-    if not is_logged_in():
-        login()
-        return get_date()
-    else:
-        content = driver.find_element(By.TAG_NAME, 'pre').text
-        date = json.loads(content)
-        return date
-
-
-def get_time(date):
+def new_get_time(date):
     time_url = TIME_URL % date
-    driver.get(time_url)
-    content = driver.find_element(By.TAG_NAME, 'pre').text
-    data = json.loads(content)
-    time = data.get("available_times")[-1]
+    session = driver.get_cookie("_yatri_session")["value"]
+    time_result = driver.execute_script(
+        "var req = new XMLHttpRequest();req.open('GET', '"
+        + str(time_url)
+        + "', false);req.setRequestHeader('Accept', 'application/json, text/javascript, /; q=0.01');req.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); req.setRequestHeader('Cookie', '_yatri_session="
+        + session
+        + "'); req.send(null);return req.responseText;"
+    )
+    available_time = json.loads(time_result)
+    print(available_time)
+    time = available_time.get("available_times")[-1]
     print(f"Got time successfully! {date} {time}")
     return time
-
 
 def reschedule(date):
     global EXIT
     print(f"Starting Reschedule ({date})")
 
-    time = get_time(date)
+    time = new_get_time(date)
     driver.get(APPOINTMENT_URL)
 
     data = {
-        "utf8": driver.find_element(by=By.NAME, value='utf8').get_attribute('value'),
+        # "utf8": driver.find_element(by=By.NAME, value='utf8').get_attribute('value'),
         "authenticity_token": driver.find_element(by=By.NAME, value='authenticity_token').get_attribute('value'),
         "confirmed_limit_message": driver.find_element(by=By.NAME, value='confirmed_limit_message').get_attribute('value'),
         "use_consulate_appointment_capacity": driver.find_element(by=By.NAME, value='use_consulate_appointment_capacity').get_attribute('value'),
@@ -184,14 +197,20 @@ def reschedule(date):
         "Cookie": "_yatri_session=" + driver.get_cookie("_yatri_session")["value"]
     }
 
-    r = requests.post(APPOINTMENT_URL, headers=headers, data=data)
-    if(r.text.find('Successfully Scheduled') != -1):
-        msg = f"Rescheduled Successfully! {date} {time}"
-        send_notification(msg)
-        EXIT = True
-    else:
-        msg = f"Reschedule Failed. {date} {time}"
-        send_notification(msg)
+    print(headers)
+    print("---------")
+    print(data)
+
+
+
+    # r = requests.post(APPOINTMENT_URL, headers=headers, data=data)
+    #if(r.text.find('Successfully Scheduled') != -1):
+    #    msg = f"Rescheduled Successfully! {date} {time}"
+    #    send_notification(msg)
+    #    EXIT = True
+    #else:
+    #    msg = f"Reschedule Failed. {date} {time}"
+    #    send_notification(msg)
 
 
 def is_logged_in():
@@ -232,52 +251,25 @@ def get_available_date(dates):
 
 
 def push_notification(dates):
-    msg = "date: "
+    msg = "nearest available date: "
     for d in dates:
-        msg = msg + d.get('date') + '; '
+        msg = msg + d.get('date') + '; \n'
     send_notification(msg)
 
 
 if __name__ == "__main__":
     login()
-    retry_count = 0
-    while 1:
-        if retry_count > 6:
-            break
-        try:
-            print("------------------")
-            print(datetime.today())
-            print(f"Retry count: {retry_count}")
-            print()
+    dates = new_get_date()[:5]
+    if not dates:
+        msg = "List is empty"
+        send_notification(msg)
+    else:
+        print_dates(dates)
+        push_notification(dates)
+        date = get_available_date(dates)
+        print()
+        print(f"New date: {date}")
+        if date:
+            reschedule(date)
 
-            dates = get_date()[:5]
-            if not dates:
-              msg = "List is empty"
-              send_notification(msg)
-              EXIT = True
-            print_dates(dates)
-            date = get_available_date(dates)
-            print()
-            print(f"New date: {date}")
-            if date:
-                reschedule(date)
-                push_notification(dates)
-
-            if(EXIT):
-                print("------------------exit")
-                break
-
-            if not dates:
-              msg = "List is empty"
-              send_notification(msg)
-              #EXIT = True
-              time.sleep(COOLDOWN_TIME)
-            else:
-              time.sleep(RETRY_TIME)
-
-        except:
-            retry_count += 1
-            time.sleep(EXCEPTION_TIME)
-
-    if(not EXIT):
-        send_notification("HELP! Crashed.")
+    exit()
